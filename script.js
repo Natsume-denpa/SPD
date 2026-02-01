@@ -70,7 +70,7 @@ function calculateWinRate(targetSpd, othersSpd) {
     const a = targetSpd * SPD_RANGE.MIN;
     const b = targetSpd * SPD_RANGE.MAX;
     let totalWinProb = 0;
-    const steps = 60;
+    const steps = 80;
     const dx = (b - a) / steps;
 
     for (let i = 0; i < steps; i++) {
@@ -90,16 +90,21 @@ function calculateVersusWinRate(allySpds, enemySpds) {
     const maxLimit = Math.max(...all) * SPD_RANGE.MAX;
 
     let totalAllyWinProb = 0;
-    const steps = 120;
+    const steps = 150;
     const dx = (maxLimit - minLimit) / steps;
 
     for (let i = 0; i < steps; i++) {
-        const x = minLimit + dx * (i + 0.5);
-        const pAllyMaxBelowX = allySpds.reduce((p, s) => p * getProbSlowerThan(s, x), 1);
-        const pAllyMaxBelowXPrev = allySpds.reduce((p, s) => p * getProbSlowerThan(s, x - dx), 1);
-        const pAllyMaxIsX = pAllyMaxBelowX - pAllyMaxBelowXPrev;
-        const pEnemyMaxBelowX = enemySpds.reduce((p, s) => p * getProbSlowerThan(s, x), 1);
-        totalAllyWinProb += pAllyMaxIsX * pEnemyMaxBelowX;
+        const xRight = minLimit + dx * (i + 1);
+        const xLeft = xRight - dx;
+        const xMid = xLeft + (dx / 2);
+
+        const pAllyMaxBelowR = allySpds.reduce((p, s) => p * getProbSlowerThan(s, xRight), 1);
+        const pAllyMaxBelowL = allySpds.reduce((p, s) => p * getProbSlowerThan(s, xLeft), 1);
+        const pAllyMaxInInterval = pAllyMaxBelowR - pAllyMaxBelowL;
+
+        const pEnemyMaxBelowMid = enemySpds.reduce((p, s) => p * getProbSlowerThan(s, xMid), 1);
+
+        totalAllyWinProb += pAllyMaxInInterval * pEnemyMaxBelowMid;
     }
     return Math.min(Math.max(totalAllyWinProb, 0), 1);
 }
@@ -174,7 +179,7 @@ function updateAll() {
             });
             
             const bestUnit = allies.reduce((a, b) => {
-                if (a.winRate === b.winRate) return a.originalIndex < b.originalIndex ? a : b;
+                if (Math.abs(a.winRate - b.winRate) < 0.00001) return a.originalIndex < b.originalIndex ? a : b;
                 return a.winRate > b.winRate ? a : b;
             });
 
@@ -186,7 +191,7 @@ function updateAll() {
             displayList = allies.map(u => ({...u, t:'ally'}));
         } else {
             mainValEl.textContent = "--";
-            badgeEl.textContent = "ユニットを入力";
+            badgeEl.textContent = "自陣を入力";
             badgeEl.className = "status-badge warning";
             resultBox.style.background = "#f1f5f9";
         }
@@ -194,10 +199,11 @@ function updateAll() {
 
     const orderListEl = document.getElementById('orderList');
     
+
     const sortedUnits = displayList.sort((a,b) => {
-        if (Math.abs(b.winRate - a.winRate) > 0.0001) return b.winRate - a.winRate;
+        if (Math.abs(b.winRate - a.winRate) > 0.00001) return b.winRate - a.winRate;
         if (b.spd !== a.spd) return b.spd - a.spd;
-        return a.originalIndex - b.originalIndex;
+        return a.originalIndex - b.originalIndex; 
     });
 
     orderListEl.innerHTML = sortedUnits.map((u, i) => {
