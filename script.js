@@ -1,6 +1,6 @@
 let currentMode = 'versus';
 const MAX_UNITS = 8;
-const SPD_RANGE = { MIN: 9000, MAX: 11000 };
+const SPD_RANGE = { MIN: 0.9, MAX: 1.1 }; // 90% ~ 110%
 
 function setMode(mode) {
     if (currentMode === mode) return;
@@ -50,32 +50,45 @@ function reIndexNames(team) {
     const label = (team === 'ally' ? '自陣' : '敵');
     Array.from(list.children).forEach((row, index) => {
         const nameInput = row.querySelector('.input-name');
-        if (nameInput.value === "" || nameInput.value.startsWith('自陣') || nameInput.value.startsWith('敵')) {
+        const currentVal = nameInput.value;
+        if (currentVal === "" || /^自陣\d+$/.test(currentVal) || /^敵\d+$/.test(currentVal)) {
             nameInput.value = label + (index + 1);
         }
     });
 }
 
-function calculateWinRate(spd1, spd2) {
-    if (spd1 === null || spd2 === null) return null;
-    const a = (spd1 + 1) * SPD_RANGE.MIN;
-    const b = (spd1 + 1) * SPD_RANGE.MAX;
-    const c = (spd2 + 1) * SPD_RANGE.MIN;
-    const d = (spd2 + 1) * SPD_RANGE.MAX;
+function calculateWinRate(targetSpd, othersSpd) {
+    if (targetSpd === null || !othersSpd || othersSpd.length === 0) return 1.0;
 
-    if (a >= d) return 1.0;
-    if (b <= c) return 0.0;
+    const a = targetSpd * SPD_RANGE.MIN;
+    const b = targetSpd * SPD_RANGE.MAX;
 
-    let winArea = 0;
-    const totalArea = (b - a) * (d - c);
-    const steps = 50; 
+    let totalWinProb = 0;
+    const steps = 50;
     const dx = (b - a) / steps;
+
     for (let i = 0; i < steps; i++) {
-        const x = a + dx * (i + 0.5);
-        const yLimit = Math.min(x, d);
-        if (yLimit > c) winArea += (yLimit - c) * dx;
+        const x = a + dx * (i + 0.5); 
+        let probAllOthersSlower = 1.0;
+
+        for (const oSpd of othersSpd) {
+            const c = oSpd * SPD_RANGE.MIN;
+            const d = oSpd * SPD_RANGE.MAX;
+
+            let pSlower;
+            if (x <= c) {
+                pSlower = 0;
+            } else if (x >= d) {
+                pSlower = 1;
+            } else {
+                pSlower = (x - c) / (d - c);
+            }
+            probAllOthersSlower *= pSlower;
+        }
+        totalWinProb += probAllOthersSlower;
     }
-    return Math.min(Math.max(winArea / totalArea, 0), 1);
+
+    return Math.min(Math.max(totalWinProb / steps, 0), 1);
 }
 
 function updateAll() {
@@ -84,6 +97,7 @@ function updateAll() {
 
     ['ally', 'enemy'].forEach(t => {
         const list = document.getElementById(t + 'List');
+        if (!list) return;
         list.querySelectorAll('.del-btn').forEach(b => b.disabled = list.children.length <= 1);
         const addBtn = document.getElementById(t === 'ally' ? 'addAllyBtn' : 'addEnemyBtn');
         if(addBtn) addBtn.disabled = list.children.length >= MAX_UNITS;
@@ -98,58 +112,81 @@ function updateAll() {
     const badgeEl = document.getElementById('statusBadge');
     const resultBox = document.getElementById('resultBox');
 
+    let displayList = [];
+
     if (currentMode === 'versus') {
         resultLabelEl.textContent = "自陣最速の先制確率";
         if (allies.length > 0 && enemies.length > 0) {
             const maxAlly = allies.reduce((a, b) => a.spd > b.spd ? a : b);
-            const maxEnemy = enemies.reduce((a, b) => a.spd > b.spd ? a : b);
-            const rate = calculateWinRate(maxAlly.spd, maxEnemy.spd);
+            const enemySpds = enemies.map(u => u.spd);
+            const rate = calculateWinRate(maxAlly.spd, enemySpds);
+            
             mainValEl.textContent = (rate * 100).toFixed(1) + "%";
             mainValEl.style.color = "var(--primary)";
             
-            if (rate >= 1.0) {
+            if (rate >= 0.999) {
                 badgeEl.textContent = "確定先制"; badgeEl.className = "status-badge active";
                 resultBox.style.background = "var(--success-soft)";
-            } else if (rate <= 0) {
+            } else if (rate <= 0.001) {
                 badgeEl.textContent = "先制不可"; badgeEl.className = "status-badge danger";
                 resultBox.style.background = "var(--enemy-soft)";
             } else {
                 badgeEl.textContent = "乱数勝負"; badgeEl.className = "status-badge info";
                 resultBox.style.background = "var(--primary-soft)";
             }
+            
+            displayList = [...allies.map(u=>({...u, t:'ally'})), ...enemies.map(u=>({...u, t:'enemy'}))];
         } else {
             mainValEl.textContent = "--";
-            mainValEl.style.color = "var(--text-light)";
-            resultBox.style.background = "#f1f5f9";
-            badgeEl.textContent = allies.length === 0 ? "自陣を入力してください" : "敵陣を入力してください";
+            badgeEl.textContent = allies.length === 0 ? "自陣を入力" : "敵陣を入力";
             badgeEl.className = "status-badge warning";
+            resultBox.style.background = "#f1f5f9";
         }
     } else {
-        resultLabelEl.textContent = "チーム内最高速度";
-        if (allies.length < 2) {
-            mainValEl.textContent = allies.length === 1 ? allies[0].spd : "--";
-            mainValEl.style.color = "var(--text)";
-            badgeEl.textContent = "2体目入力待ち";
-            badgeEl.className = "status-badge warning";
-            resultBox.style.background = "var(--warning-soft)";
-        } else {
-            const maxAlly = allies.reduce((a, b) => a.spd > b.spd ? a : b).spd;
-            mainValEl.textContent = maxAlly;
+        resultLabelEl.textContent = "最速行動の期待値";
+        if (allies.length >= 1) {
+            allies.forEach(u => {
+                const others = allies.filter(o => o !== u).map(o => o.spd);
+                u.winRate = calculateWinRate(u.spd, others);
+            });
+            
+            const bestUnit = allies.reduce((a, b) => a.winRate > b.winRate ? a : b);
+            mainValEl.textContent = bestUnit.name;
             mainValEl.style.color = "var(--primary)";
-            badgeEl.textContent = "解析完了";
+            badgeEl.textContent = (bestUnit.winRate * 100).toFixed(1) + "% で1位";
             badgeEl.className = "status-badge info";
             resultBox.style.background = "var(--primary-soft)";
+            
+            displayList = allies.map(u => ({...u, t:'ally'}));
+        } else {
+            mainValEl.textContent = "--";
+            badgeEl.textContent = "ユニットを入力";
+            badgeEl.className = "status-badge warning";
+            resultBox.style.background = "#f1f5f9";
         }
     }
 
-    const allUnits = [...allies.map(u=>({...u, t:'ally'})), ...enemies.map(u=>({...u, t:'enemy'}))].sort((a,b)=>b.spd-a.spd);
     const orderListEl = document.getElementById('orderList');
-    orderListEl.innerHTML = allUnits.map((u, i) => `
-        <div class="rank-item ${u.t === 'ally' ? 'is-ally' : 'is-enemy'}">
-            <div class="u-info"><span>${i+1}</span> ${u.name}</div>
-            <div class="u-spd-text">素早さ：<span class="u-spd-val">${u.spd}</span></div>
-        </div>
-    `).join('') || '<p style="text-align:center;color:#94a3b8;font-size:0.8rem;padding:20px;">数値入力待ち</p>';
+    const sortedUnits = displayList.sort((a,b) => (b.winRate || b.spd) - (a.winRate || a.spd));
+
+    orderListEl.innerHTML = sortedUnits.map((u, i) => {
+        const chanceInfo = u.winRate !== undefined 
+            ? `<div class="u-chance">1位確率: <span>${(u.winRate * 100).toFixed(1)}%</span></div>` 
+            : '';
+            
+        return `
+            <div class="rank-item ${u.t === 'ally' ? 'is-ally' : 'is-enemy'}">
+                <div class="u-info">
+                    <span class="rank-num">${i+1}</span> 
+                    <span class="u-name">${u.name}</span>
+                </div>
+                <div class="u-details">
+                    <div class="u-spd-text">SPD: <span class="u-spd-val">${u.spd}</span></div>
+                    ${chanceInfo}
+                </div>
+            </div>
+        `;
+    }).join('') || '<p style="text-align:center;color:#94a3b8;font-size:0.8rem;padding:20px;">数値入力待ち</p>';
 }
 
 function getTeamData(id) {
@@ -157,8 +194,14 @@ function getTeamData(id) {
     if (!list) return [];
     return Array.from(list.children).map(row => {
         const val = row.querySelector('.input-spd').value;
-        return { name: row.querySelector('.input-name').value || "無名", spd: val === "" ? null : parseInt(val) };
+        return { 
+            name: row.querySelector('.input-name').value || "無名", 
+            spd: val === "" ? null : parseInt(val) 
+        };
     }).filter(u => u.spd !== null);
 }
 
-window.onload = () => { addRow('ally'); addRow('enemy'); };
+window.onload = () => { 
+    addRow('ally'); 
+    addRow('enemy'); 
+};
